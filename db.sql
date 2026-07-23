@@ -58,3 +58,17 @@ CREATE TABLE IF NOT EXISTS syllabus_progress (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, subject_name, lecture_interval)
 );
+
+-- Attendance Records Table (Google Sheets sync)
+CREATE TABLE IF NOT EXISTS attendance_records (
+    id SERIAL PRIMARY KEY,
+    subject_code VARCHAR(50) NOT NULL,
+    batch_section VARCHAR(50) NOT NULL,
+    date VARCHAR(20) NOT NULL,
+    lecture_time_slot VARCHAR(50),
+    lecture1_attendance INT DEFAULT 0,
+    lecture2_attendance INT DEFAULT 0,
+    total_students INT DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(subject_code, batch_section, date)
+);

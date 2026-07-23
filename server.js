@@ -249,6 +249,107 @@ app.get('/api/teams/:teamId/coverage/:subject', async (req, res) => {
   }
 });
 
+// Endpoint: Receive & Upsert Attendance payload from Google Apps Script
+app.post('/api/attendance/update', async (req, res) => {
+  const { records } = req.body;
+  if (!records || !Array.isArray(records)) {
+    return res.status(400).json({ error: 'Missing or invalid records array' });
+  }
+
+  try {
+    // Ensure table exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS attendance_records (
+          id SERIAL PRIMARY KEY,
+          subject_code VARCHAR(50) NOT NULL,
+          batch_section VARCHAR(50) NOT NULL,
+          date VARCHAR(20) NOT NULL,
+          lecture_time_slot VARCHAR(50),
+          lecture1_attendance INT DEFAULT 0,
+          lecture2_attendance INT DEFAULT 0,
+          total_students INT DEFAULT 0,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(subject_code, batch_section, date)
+      );
+    `);
+
+    let upsertedCount = 0;
+    for (const item of records) {
+      const { subjectCode, batchSection, date, lectureTimeSlot, lecture1Attendance, lecture2Attendance, totalStudents } = item;
+      if (!subjectCode || !batchSection || !date) continue;
+
+      const query = `
+        INSERT INTO attendance_records 
+          (subject_code, batch_section, date, lecture_time_slot, lecture1_attendance, lecture2_attendance, total_students, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
+        ON CONFLICT (subject_code, batch_section, date) DO UPDATE SET
+          lecture_time_slot = EXCLUDED.lecture_time_slot,
+          lecture1_attendance = EXCLUDED.lecture1_attendance,
+          lecture2_attendance = EXCLUDED.lecture2_attendance,
+          total_students = EXCLUDED.total_students,
+          updated_at = CURRENT_TIMESTAMP;
+      `;
+      await pool.query(query, [
+        subjectCode,
+        batchSection,
+        date,
+        lectureTimeSlot || '',
+        lecture1Attendance || 0,
+        lecture2Attendance || 0,
+        totalStudents || 0
+      ]);
+      upsertedCount++;
+    }
+
+    res.json({ success: true, count: upsertedCount });
+  } catch (err) {
+    console.error('Error upserting attendance records:', err);
+    res.status(500).json({ error: 'Database error upserting attendance records' });
+  }
+});
+
+// Endpoint: Get Attendance records for Android mobile app
+app.get('/api/attendance', async (req, res) => {
+  const { date, subject, section } = req.query;
+  try {
+    let query = 'SELECT subject_code, batch_section, date, lecture_time_slot, lecture1_attendance, lecture2_attendance, total_students FROM attendance_records WHERE 1=1';
+    const params = [];
+
+    if (date) {
+      params.push(date);
+      query += ` AND date = $${params.length}`;
+    }
+    if (subject) {
+      params.push(subject);
+      query += ` AND subject_code = $${params.length}`;
+    }
+    if (section) {
+      params.push(section);
+      query += ` AND batch_section = $${params.length}`;
+    }
+
+    query += ' ORDER BY date DESC, subject_code ASC';
+
+    const result = await pool.query(query, params);
+    
+    // Map snake_case DB columns to camelCase JSON properties
+    const mapped = result.rows.map(row => ({
+      subjectCode: row.subject_code,
+      batchSection: row.batch_section,
+      date: row.date,
+      lectureTimeSlot: row.lecture_time_slot,
+      lecture1Attendance: row.lecture1_attendance,
+      lecture2Attendance: row.lecture2_attendance,
+      totalStudents: row.total_students
+    }));
+
+    res.json(mapped);
+  } catch (err) {
+    console.error('Error fetching attendance records:', err);
+    res.status(500).json({ error: 'Database error fetching attendance' });
+  }
+});
+
 // Start Server
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
